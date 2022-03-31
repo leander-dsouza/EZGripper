@@ -52,6 +52,25 @@ from std_srvs.srv import Empty
 # bool reached_goal # True iff the gripper position has reached the commanded setpoint
 #
 
+OPEN_DUAL_GEN1_POS = 1.5707
+CLOSE_DUAL_GEN1_POS = -0.27
+
+OPEN_DUAL_GEN2_POS = 0.0
+CLOSE_DUAL_GEN2_POS = 1.94
+
+OPEN_DUAL_GEN2_SINGLE_MOUNT_POS = -1.5707
+CLOSE_DUAL_GEN2_SINGLE_MOUNT_POS = 0.27
+
+OPEN_DUAL_GEN2_TRIPLE_MOUNT_POS = -1.5707
+CLOSE_DUAL_GEN2_TRIPLE_MOUNT_POS = 0.27
+
+OPEN_QUAD_POS = 1.5707
+CLOSE_QUAD_POS = -0.27
+
+MIN_SIMULATED_EFFORT = 0.0
+MAX_SIMULATED_EFFORT = 1.0
+
+
 
 def remap(input_val, in_min, in_max, out_min, out_max):
     """
@@ -61,73 +80,62 @@ def remap(input_val, in_min, in_max, out_min, out_max):
             (in_max - in_min) + out_min
 
 
+def remap_on_module_type(module_type, current_position):
+    """
+    Remap based on module_type
+    """
+
+    if module_type == "dual_gen1":
+        return remap(current_position, \
+            100.0, 0.0, OPEN_DUAL_GEN1_POS, CLOSE_DUAL_GEN1_POS)
+
+    elif module_type == "dual_gen2":
+        return remap(current_position, \
+            100.0, 0.0, OPEN_DUAL_GEN2_POS, CLOSE_DUAL_GEN2_POS)
+
+    elif module_type == "dual_gen2_single_mount":
+        return remap(current_position, \
+            100.0, 0.0, OPEN_DUAL_GEN2_SINGLE_MOUNT_POS, CLOSE_DUAL_GEN2_SINGLE_MOUNT_POS)
+
+    elif module_type == "dual_gen2_triple_mount":
+        return remap(current_position, \
+            100.0, 0.0, OPEN_DUAL_GEN2_TRIPLE_MOUNT_POS, CLOSE_DUAL_GEN2_TRIPLE_MOUNT_POS)
+
+    elif module_type == "quad":
+        return remap(current_position, \
+            100.0, 0.0, OPEN_QUAD_POS, CLOSE_QUAD_POS)
+
+
+
 class EZGripper():
     """
     EZGripper Class
     """
 
-    OPEN_DUAL_GEN1_POS = 1.5707
-    CLOSE_DUAL_GEN1_POS = -0.27
+    def __init__(self, module_type, action_name):
 
-    OPEN_DUAL_GEN2_POS = 0.0
-    CLOSE_DUAL_GEN2_POS = 1.94
-
-    OPEN_DUAL_GEN2_SINGLE_MOUNT_POS = -1.5707
-    CLOSE_DUAL_GEN2_SINGLE_MOUNT_POS = 0.27
-
-    OPEN_DUAL_GEN2_TRIPLE_MOUNT_POS = -1.5707
-    CLOSE_DUAL_GEN2_TRIPLE_MOUNT_POS = 0.27
-
-    OPEN_QUAD_POS = 1.5707
-    CLOSE_QUAD_POS = -0.27
-
-    MIN_SIMULATED_EFFORT = 0.0
-    MAX_SIMULATED_EFFORT = 1.0
-
-
-    def __init__(self, module_type, name):
-        self.name = name
-
-        # Open positions
-
-        if module_type == 'dual_gen1' or module_type == 'quad':
-            self._open_position = 1.5707
-
-        elif module_type == 'dual_gen2':
-            self._open_position = 0.0
-
-        elif module_type == 'dual_gen2_single_mount' or 'dual_gen2_triple_mount':
-            self._open_position = -1.5707
-
-        # Close positions
-
-        if module_type == 'dual_gen1' or module_type == 'quad':
-            self._close_position = -0.27
-
-        elif module_type == 'dual_gen2':
-            self._close_position = 1.94
-
-        elif module_type == 'dual_gen2_single_mount' or 'dual_gen2_triple_mount':
-            self._close_position = 0.27
-
+        self.action_name = action_name
         self._module_type = module_type
 
-        self.step_open_pos = self._close_position
-        self.step_close_pos = self._open_position
+        self._grip_max = 100.0 # maximum open position for grippers - correlates to .17 meters
+        self._grip_value = self._grip_max
+        self._grip_min = 0.01 # if 0.0, torque mode, not position mode
+        self._grip_step = self._grip_max /15 # gripper step Cross Up and Cross Down
 
-        self._grip_value = self._open_position
         self._connect_to_gripper_action()
         self._connect_to_calibrate_srv()
 
     def _connect_to_gripper_action(self):
-        rospy.loginfo("Waiting for action server %s..."%self.name)
-        self._client = actionlib.SimpleActionClient(self.name, GripperCommandAction)
+
+        rospy.loginfo("Waiting for action server {}...".format(self.action_name))
+        self._client = actionlib.SimpleActionClient(self.action_name, GripperCommandAction)
         self._client.wait_for_server(rospy.Duration(60))
         rospy.loginfo("Connected to action server")
 
     def _connect_to_calibrate_srv(self):
-        service_name = self.name + '/calibrate'
-        rospy.loginfo("Waiting for service %s..."%service_name)
+
+        service_name = self.action_name + '/calibrate'
+        rospy.loginfo("Waiting for service {}...".format(service_name))
         rospy.wait_for_service(service_name)
         self._calibrate_srv = rospy.ServiceProxy(service_name, Empty)
         rospy.loginfo("Connected to service " + service_name)
@@ -142,7 +150,7 @@ class EZGripper():
         except rospy.ServiceException as exc:
             rospy.logwarn("Service did not process request: " + str(exc))
         else:
-            self._grip_value = self._open_position
+            self._grip_value = self._grip_max
         rospy.loginfo("ezgripper_interface: calibrate done")
 
     def open_step(self):
@@ -150,27 +158,15 @@ class EZGripper():
         Step Opening the gripper
         """
 
-        # Going from close to open
+        self._grip_value = self._grip_value + self._grip_step
+        if self._grip_value > self._grip_max:
+            self._grip_value = self._grip_max
 
-        step = abs(self._close_position - self._open_position) / 10.0
+        rospy.loginfo("ezgripper_interface: goto position {:.3f}".format(self._grip_value))
 
-        if self._close_position < self._open_position:
-            self.step_open_pos += step
-
-            if self.step_open_pos > self._open_position:
-                self.step_open_pos = self._close_position
-
-        else:
-            self.step_open_pos -= step
-
-            if self.step_open_pos < self._open_position:
-                self.step_open_pos = self._close_position
-
-
-        rospy.loginfo("ezgripper_interface: goto position %.3f" % self.step_open_pos)
         goal = GripperCommandGoal()
-        goal.command.position = self.step_open_pos
-        goal.command.max_effort = 1.0
+        goal.command.position = remap_on_module_type(self._module_type, self._grip_value)
+        goal.command.max_effort = 0.5
         self._client.send_goal_and_wait(goal)
         rospy.loginfo("ezgripper_interface: goto position done")
 
@@ -180,26 +176,15 @@ class EZGripper():
         Step Closing the Gripper
         """
 
-        # Going from open to close
+        self._grip_value = self._grip_value - self._grip_step
+        if self._grip_value < self._grip_min:
+            self._grip_value = self._grip_min
 
-        step = abs(self._close_position - self._open_position) / 10.0
+        rospy.loginfo("ezgripper_interface: goto position {:.3f}".format(self._grip_value))
 
-        if self._open_position < self._close_position:
-            self.step_close_pos += step
-
-            if self.step_close_pos > self._close_position:
-                self.step_close_pos = self._open_position
-
-        else:
-            self.step_close_pos -= step
-
-            if self.step_close_pos < self._close_position:
-                self.step_close_pos = self._open_position
-
-        rospy.loginfo("ezgripper_interface: goto position %.3f" % self.step_close_pos)
         goal = GripperCommandGoal()
-        goal.command.position = self.step_close_pos
-        goal.command.max_effort = 1.0
+        goal.command.position = remap_on_module_type(self._module_type, self._grip_value)
+        goal.command.max_effort = 0.5
         self._client.send_goal_and_wait(goal)
         rospy.loginfo("ezgripper_interface: goto position done")
 
@@ -207,107 +192,81 @@ class EZGripper():
         """
         Closing the Gripper
         """
-        rospy.loginfo("ezgripper_interface: close, effort %.1f" % max_effort)
+
+        rospy.loginfo("ezgripper_interface: close, effort {:.1f}".format(max_effort))
+
         goal = GripperCommandGoal()
-        goal.command.position = self._close_position
-        goal.command.max_effort = max_effort
+        goal.command.position = remap_on_module_type(self._module_type, 0.0)
+        goal.command.max_effort = max_effort / 100.0
         self._client.send_goal_and_wait(goal)
         rospy.loginfo("ezgripper_interface: close done")
-        self._grip_value = self._close_position
+        self._grip_value = self._grip_min
 
     def hard_close(self):
         """
         Hard Closing the Gripper
         """
         rospy.loginfo("ezgripper_interface: hard close")
+
         goal = GripperCommandGoal()
-        goal.command.position = self._close_position
+        goal.command.position = remap_on_module_type(self._module_type, 0.0)
         goal.command.max_effort = 1.0
         self._client.send_goal_and_wait(goal)
         rospy.loginfo("ezgripper_interface: hard close done")
-        self._grip_value = self._close_position
+        self._grip_value = self._grip_min
 
     def soft_close(self):
         """
         Soft Closing the Gripper
         """
         rospy.loginfo("ezgripper_interface: soft close")
+
         goal = GripperCommandGoal()
-        goal.command.position = self._close_position
+        goal.command.position = remap_on_module_type(self._module_type, 0.0)
         goal.command.max_effort = 0.2
         self._client.send_goal_and_wait(goal)
         rospy.loginfo("ezgripper_interface: soft close done")
-        self._grip_value = self._close_position
+        self._grip_value = self._grip_min
 
     def open(self):
         """
         Opening the Gripper
         """
         rospy.loginfo("ezgripper_interface: open")
+
         goal = GripperCommandGoal()
-        goal.command.position = self._open_position
+        goal.command.position = remap_on_module_type(self._module_type, 100.0)
         goal.command.max_effort = 1.0
         self._client.send_goal_and_wait(goal)
         rospy.loginfo("ezgripper_interface: open done")
-        self._grip_value = self._open_position
+        self._grip_value = self._grip_max
 
-    def goto_position(self, current_position, current_effort):
+    def goto_position(self, grip_position, grip_effort):
         """
         Go to desired position
         """
+        rospy.loginfo("ezgripper_interface: goto position {:.3f}".format(grip_position))
 
-        gripper_module = self._module_type
-
-        if gripper_module == 'dual_gen1':
-            current_position = remap(current_position, \
-                100.0, 0.0, self.OPEN_DUAL_GEN1_POS, \
-                    self.CLOSE_DUAL_GEN1_POS)
-
-        elif gripper_module == 'dual_gen2':
-            current_position = remap(current_position, \
-                100.0, 0.0, self.OPEN_DUAL_GEN2_POS, \
-                    self.CLOSE_DUAL_GEN2_POS)
-
-        elif gripper_module == 'dual_gen2_single_mount':
-            current_position = remap(current_position, \
-                100.0, 0.0, self.OPEN_DUAL_GEN2_SINGLE_MOUNT_POS, \
-                    self.CLOSE_DUAL_GEN2_SINGLE_MOUNT_POS)
-
-        elif gripper_module == 'dual_gen2_triple_mount':
-            current_position = remap(current_position, \
-                100.0, 0.0, self.OPEN_DUAL_GEN2_TRIPLE_MOUNT_POS, \
-                    self.CLOSE_DUAL_GEN2_TRIPLE_MOUNT_POS)
-
-        elif gripper_module == 'quad':
-            current_position = remap(current_position, \
-                100.0, 0.0, self.OPEN_QUAD_POS, \
-                    self.CLOSE_QUAD_POS)
-
-        current_effort = remap(current_effort, \
-            0.0, 100.0, self.MIN_SIMULATED_EFFORT, \
-                self.MAX_SIMULATED_EFFORT)
-
-
-        # position in % 0 to 100 (0 is closed), effort in % 0 to 100
-        rospy.loginfo("ezgripper_interface: goto position %.3f" % current_position)
         goal = GripperCommandGoal()
-        goal.command.position = current_position
-        goal.command.max_effort = current_effort
+        goal.command.position = remap_on_module_type(self._module_type, grip_position)
+        goal.command.max_effort = grip_effort / 100.0
         self._client.send_goal_and_wait(goal)
         rospy.loginfo("ezgripper_interface: goto position done")
-        self._grip_value = current_position
+        self._grip_value = grip_position
 
     def release(self):
         """
         Release the gripper
         """
         rospy.loginfo("ezgripper_interface: release")
+
         goal = GripperCommandGoal()
         goal.command.position = 0.0 # not dependent on position
         goal.command.max_effort = 0.0 # max_effort = 0.0 releases all torque on motor
         self._client.send_goal_and_wait(goal)
         rospy.loginfo("ezgripper_interface: release done")
-        self._grip_value = self._close_position
+        self._grip_value = self._grip_min
+
 
 if __name__ == "__main__":
     rospy.init_node("ezgripper_interface_node")

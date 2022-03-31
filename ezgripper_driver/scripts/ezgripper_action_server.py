@@ -166,8 +166,8 @@ class GripperAction:
 
             for servo in gripper.servos:
                 status = DiagnosticStatus()
-                status.name = "Gripper '%s' servo %d"%(gripper.name, servo.servo_id)
-                status.hardware_id = '%s'%servo.servo_id
+                status.name = "Gripper - {}, Servo - {}".format(gripper.name, servo.servo_id)
+                status.hardware_id = '{}'.format(servo.servo_id)
                 temperature = servo.read_temperature()
 
                 temp_msg.value = str(temperature)
