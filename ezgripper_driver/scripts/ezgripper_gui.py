@@ -127,7 +127,7 @@ class GripperGUI(QMainWindow):
         """
         Enable Zero Torque Mode
         """
-        gripper.goto_position(0.0, 10.0)
+        gripper.goto_position(0.0, 0.0)
 
     def ten_percent_open(self):
         """
